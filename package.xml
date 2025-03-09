@@ -7,13 +7,25 @@
   <maintainer email="andre@todo.todo">andre</maintainer>
   <license>TODO: License declaration</license>
 
+  <exec_depend>robot_localization</exec_depend>
+  <exec_depend>imu_filter_madgwick</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+
   <depend>rclpy</depend>
+  <depend>standard_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>sensor_msgs_py</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>visualization_msgs</depend>
   <depend>cv_bridge</depend>
   <depend>opencv</depend>
   <depend>open3d</depend>
   <depend>numpy</depend>
+  <depend>transforms3d</depend>
+  <depend>tf2_ros</depend>
+  <depend>json</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

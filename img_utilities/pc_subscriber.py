@@ -32,7 +32,7 @@ class PCSubscriber(Node):
         self.shutter_accel = False
         self.shutter_count = 0
         self.first = True
-        self.orientation = np.array([1, 0, 0, 0])
+        self.orientation = np.array([1.0, 0.0, 0.0, 0.0])
         self.angular_velocity = np.array([0.0, 0.0, 0.0])
         self.acceleration = np.array([0.0, 0.0, 0.0])
         self.past_time = None
@@ -101,6 +101,7 @@ class PCSubscriber(Node):
             dq = 0.5 * transforms3d.quaternions.qmult(self.orientation, q)
             self.orientation += dq * dt
             self.orientation /= np.linalg.norm(self.orientation)
+            print(f"Orientation is: {self.orientation[0]}, {self.orientation[1]}, {self.orientation[2]}, {self.orientation[3]}")
         if (self.shutter_gyro == True):
             # Get  angular_velocity
             self.shutter_gyro = False
@@ -207,6 +208,17 @@ def plot_inliers(pc, inliers_list, rgb_triad=[0.20, 0.92, 0.69]):
     return inliers, outliers
 
 
+def robot_localization(initial_position, initial_time):
+    # Calculate movement since initial_time
+    change_in_position = f(initial_time)
+    # a = a(t), v = S(a(t))dt + v0, p = SS(a(t))dtdt + v0*t + p0
+    # S(x(t)) = S(x(t-dt)) + x(t)*dt
+    # S(S(x(t))) = S(S(x(t-dt))) + (S(x(t-dt)) + x(t)*dt)*dt
+
+    # Output current position given the initial position and the change in position
+    return (initial_position + change_in_position)
+
+
 # Main function
 
 def main(args=None):
@@ -214,7 +226,6 @@ def main(args=None):
     rclpy.init(args=args)
     pc_subscriber = PCSubscriber()
     spinMultipleThreads(pc_subscriber)
-    rclpy.shutdown()
     pc_subscriber.destroy_node()
     rclpy.shutdown()
 
