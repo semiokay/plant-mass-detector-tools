@@ -3,99 +3,137 @@
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import PointCloud2
+from geometry_msgs.msg import Pose
 import sensor_msgs_py.point_cloud2 as pc2
-from nav_msgs.msg import Odometry
+from std_msgs.msg import Bool
 import os
 import json
 from datetime import datetime
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
-# import open3d as o3d
-from open3d import geometry as o3d_geometry
-from open3d import utility as o3d_utility
-from open3d import io as o3d_io
 import numpy as np
+from cloud_interfaces.srv import FuseClouds
 
 # Constants
 
 TIMER_FREQUENCY = 2
+SERVICE_WAIT_TIMEOUT = 1.0 # s
 
 
 # Class definition
 
-class NodeName(Node):
+class PCFuser(Node):
+    # This node collects pointcloud2 data from /input_pc and pose data from /input_pose 
+    # and fuses it with existing pointcloud data using icp (from open3d).
+    # Once it receives a firing command from /firing, it publishes the accumulated point clouds to /output_pc
+    # and clears the point cloud list, allowing it to do a reset.
+    # This node uses the /icp_service node
     def __init__(self):
-        super().__init__('node_name')
+        super().__init__('pc_fuser')
         
         # Generate callback groups
         timerCBGroup = MutuallyExclusiveCallbackGroup()
         pcCBGroup = MutuallyExclusiveCallbackGroup()
+        firingCBGroup = MutuallyExclusiveCallbackGroup()
+        clientCBGroup = MutuallyExclusiveCallbackGroup()
         
-        # Initialize shutter variables
-        self.shutter = False
-        self.shutter_count = 0
-        self.first = True
-        
-        # Define point cloud save directory
-        timestamp = datetime.now().strftime("%Y%m%d_%H  %M%S%f")
-        self.save_directory = f"/home/andre/Documents/ros2/cv_venv_ws/extra/PointClouds/{timestamp}_snap"
-        
-        # Ensure the save directory exists
-        os.makedirs(self.save_directory, exist_ok=True)
+        # Initialize state variables
+        self.pc = None
+        self.pc_pose = None
+        self.pc_new = None
+        self.pc_new_pose = None
+        self.available = True
+        self.firing_signal = False
+        self.sync = False
         
         # Subscribe to the PointCloud2 topic
-        self.pc_subscriber = self.create_subscription(PointCloud2, '/camera/depth/color/points', self.pc_callback, 10, callback_group=pcCBGroup)
-        self.get_logger().info("Subscribed to PointCloud2 topic")
+        self.firing = self.create_subscription(Bool, '/firing', self.firing_callback, 10, callback_group=firingCBGroup)
+        self.pc_subscriber = self.create_subscription(PointCloud2, '/input_pc', self.pc_callback, 10, callback_group=pcCBGroup)
+        self.pose_subscriber = self.create_subscription(Pose, '/input_pose', self.pose_callback, 10, callback_group=pcCBGroup)
+        self.pc_publisher = self.create_publisher(PointCloud2, '/output_pc', 10)
+        self.cli = self.create_client(FuseClouds, "/icp_service", callback_group=clientCBGroup)
+        self.waitForService()
 
-        # Create a shutter_callback
+        # Create a timer_callback
         timer_period = 1.0/TIMER_FREQUENCY  # seconds
         self.timer = self.create_timer(timer_period, self.timer_callback, callback_group=timerCBGroup)
 
     # Class methods
 
     def timer_callback(self):
-        if not self.shutter:
-            input("Press Enter to take a snapshot")
-            self.shutter = True
-            if self.first:
-                self.first = False
-            else:
-                self.shutter_count += 1
-                
-
+        if self.available & self.firing_signal:
+            self.pc_publisher.publish(self.pc)
+            self.get_logger().info("...........................\nPoint cloud published.\n...........................")
+            self.pc = None
+            self.pc_pose = None
+            self.firing_signal = False
+    
+    
     def pc_callback(self, msg):
-        if self.shutter:
-            
-            # Convert the PointCloud2 message to a list of points (x, y, z)
-            cloud_data = pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True)
-             # Convert cloud_data to numpy array by extracting the individual x, y, z components
-            points = []
-            for point in cloud_data:
-                points.append([point[0], point[1], point[2]])
+        if self.pc == None: 
+            self.pc = msg
+        elif (self.pc != None) & (self.pc_pose != None):
+            self.pc_new = msg
+            self.attempt_sync_fusion()
+        else:
+            pass
+    
 
-            if points:
-                # Convert the list of points into a numpy array
-                np_points = np.array(points)
+    def firing_callback(self, msg):
+        self.firing_signal = msg.data
+        self.get_logger().info("...........................\nFiring signal received.\n...........................")
 
-                # Convert the numpy array to an Open3D PointCloud object
-                pcd = o3d_geometry.PointCloud()
-                pcd.points = o3d_utility.Vector3dVector(np_points)
 
-                # Flip the point cloud or it will be upside down
-                pcd.transform([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
+    def pose_callback(self, msg):
+        if self.pc_pose == None:
+            self.pc_pose = msg
+        elif (self.pc != None) & (self.pc_pose != None):
+            self.pc_new_pose = msg
+            self.attempt_sync_fusion()
+        else:
+            pass
 
-                # Save the point cloud to a .pcd file
-                pc_filename = os.path.join(self.save_directory, "pc_%04d.pcd" % self.shutter_count)
-                o3d_io.write_point_cloud(pc_filename, pcd)
+  
+    def waitForService(self):
+        
+        while not self.cli.wait_for_service( timeout_sec = SERVICE_WAIT_TIMEOUT ):
+            self.get_logger().info("Service unavailable. Waiting again...\n")
+        
+        self.get_logger().info("Contact with service successful!\n")
 
-                ex_filename = os.path.join(self.save_directory, "extrinsics_%04d.json" % self.shutter_count)
-                with open(ex_filename, 'w') as f:
-                    json_data = pose_to_json(self.odom_msg.pose)
-                    json.dump(json_data, f, indent=4)
-                
-                self.get_logger().info(f"Saved PointCloud2 to {pc_filename} and Odometry to {ex_filename}")
-                
-                self.shutter = False
+
+    def attempt_sync_fusion(self):
+        if (self.pc_new != None) and (self.pc_new_pose != None):
+            # Create server message
+            fuse_msg = FuseClouds.Request()
+            fuse_msg.pc1 = self.pc
+            fuse_msg.pc1_pose = self.pc_pose
+            fuse_msg.pc2 = self.pc_new
+            fuse_msg.pc2_pose = self.pc_new_pose
+
+            # Send to server
+            self.available = False
+            self.future = self.cli.call_async(fuse_msg)
+            self.future.add_done_callback(self.handle_response)
+
+            # Reset incoming data
+            self.pc_new = None
+            self.pc_new_pose = None
+
+
+    def handle_response(self, future):
+        try:
+            response = future.result()
+            self.pc = response.pc_fused
+            self.pc_pose = response.pc_pose
+            self.available = True
+            self.get_logger().info("...........................\nServer response received.\n...........................")
+
+        except Exception as e:
+            self.get_logger().error(f"Service call failed: {str(e)}")
+
+        return response
+
 
 
 # Auxiliary functions
@@ -127,11 +165,15 @@ def spinMultipleThreads(node):
     except KeyboardInterrupt:
         node.get_logger().info("Keyboard interrupt, shutting down. \n\n\n\n\n")
 
+
+
+# Main function
+
 def main(args=None):
     rclpy.init(args=args)
-    node_name = NodeName()
-    spinMultipleThreads(node_name)
-    node_name.destroy_node()
+    pc_fuser = PCFuser()
+    spinMultipleThreads(pc_fuser)
+    pc_fuser.destroy_node()
     rclpy.shutdown()
 
 if __name__ == '__main__':

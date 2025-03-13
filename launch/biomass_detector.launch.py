@@ -1,6 +1,6 @@
 import launch
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, LogInfo, OpaqueFunction, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, LogInfo, OpaqueFunction, IncludeLaunchDescription, SetEnvironmentVariable
 from launch.substitutions import LaunchConfiguration
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node, SetParameter
@@ -13,6 +13,7 @@ def generate_launch_description():
           'subscribe_depth':True,
           'subscribe_odom_info':True,
           'approx_sync':False,
+          'log_level': 'error',
           'wait_imu_to_init':True}]
 
     remappings=[
@@ -31,6 +32,7 @@ def generate_launch_description():
 
         # Make sure IR emitter is enabled
         SetParameter(name='depth_module.emitter_enabled', value=1),
+        
     ])
 
     # Launch camera driver. Terminal way is: ros2 launch realsense2_camera rs_launch.py pointcloud.enable:=true [etc.]
@@ -75,6 +77,22 @@ def generate_launch_description():
                          'publish_tf':False}],
             remappings=[('imu/data_raw', LaunchConfiguration('imu_topic'))])
     
+    icp_server = Node(
+            package='img_utilities', executable='icp_server', output='screen',
+    )
+
+    pc_fuser = Node(
+            package='img_utilities', executable='pc_fuser', output='screen',
+    )
+
+    display_node = Node(
+            package='img_utilities', executable='display_node', output='screen',
+    )
+
+    volume_estimator = Node(
+            package='img_utilities', executable='volume_estimator', output='screen',
+    )
+    
 #     imu_node = Node(
 #         package='robot_localization',
 #         executable='ekf_node', 
@@ -104,6 +122,9 @@ def generate_launch_description():
     ld.add_action(rtabmap_odom)
     ld.add_action(rtabmap_slam)
     ld.add_action(rtabmap_viz)
+    ld.add_action(icp_server)
+    ld.add_action(pc_fuser)
+    ld.add_action(display_node) # volume_estimator
 
 #   ld.add_action(pc_snap)
 #   ld.add_action(imu_node)

@@ -28,6 +28,8 @@ setup(
             'pc_snap = img_utilities.pc_snap:main',
             'pc_fuser = img_utilities.pc_fuser:main',
             'icp_server = img_utilities.icp_server:main',
+            'display_node = img_utilities.display_node:main',
+            'volume_estimator = img_utilities.volume_estimator:main',
         ],
     },
 )
